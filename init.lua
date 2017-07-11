@@ -3,17 +3,21 @@ local modpath = minetest.get_modpath(minetest.get_current_modname())
 
 local BUILD_DISTANCE = 3
 
+schemlib_builder_npcf = {
+	plan_list = {}
+}
+
+
 local function check_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- check if current plan is still valid / get them
 	if self.metadata.build_plan_id then
-		self.build_plan = schemlib.plan.get(self.metadata.build_plan_id)
+		self.build_plan = schemlib_builder_npcf.plan_list[self.metadata.build_plan_id]
 		if self.build_plan then
 			if not self.build_plan.data then
 				--TODO (maybe): load the data
 			elseif self.build_plan.data.nodecount == 0 then
 				-- build is finished
-				self.build_plan:delete_plan()
 				self.build_plan = nil
 				self.metadata.build_plan_id = nil
 			end
@@ -41,7 +45,7 @@ local function check_plan(self)
 	end
 
 	if self.build_plan == nil then
-		local all_plan = schemlib.plan.get_all()
+		local all_plan = schemlib_builder_npcf.plan_list
 		if all_plan ~= nil then
 			-- select existing plan
 			local selected_plan = {}
@@ -81,6 +85,7 @@ local function check_plan(self)
 		self.metadata.build_plan_id = filename
 		self.build_plan = schemlib.plan.new(filename)
 		self.build_plan:read_from_schem_file(filepath..filename)
+		schemlib_builder_npcf.plan_list[filename] = self.build_plan
 		dprint("building loaded. Nodes:", self.build_plan.data.nodecount)
 		return false -- small pause, do nothing anymore this step
 	else
@@ -100,7 +105,7 @@ local function plan_ready_to_build(self)
 	-- including check for is_ground_content ~= false in this area (nil is like true)
 	-- Check node count is zero. Delete plan in this case
 
-	-- TODO: if buildable: set anchor and save the building (will be added to the schemlib.plan.plan_list)
+	-- TODO: if buildable: set anchor and save the building
 	-- Now the plan is ready to build
 	
 	-- the anchor_pos missed, plan needs t
@@ -125,7 +130,7 @@ local function plan_ready_to_build(self)
 		-- rename to saveble
 		self.build_plan.anchor_pos = anchor_pos
 		self.metadata.build_plan_id = self.build_plan.anchor_pos.x.."-"..self.build_plan.anchor_pos.y.."-"..self.build_plan.anchor_pos.z
-		self.build_plan:change_plan_id(self.metadata.build_plan_id)
+		self.build_plan.plan_id = self.metadata.build_plan_id
 		self.build_plan:apply_flood_with_air()
 		-- TODO: self.build_plan:save() to file
 		dprint("building ready to build at:", self.metadata.build_plan_id)
