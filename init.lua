@@ -1,6 +1,7 @@
 --local dprint = print
 local dprint = function() return end
 local modpath = minetest.get_modpath(minetest.get_current_modname())
+local filepath = modpath.."/buildings/"
 
 local BUILD_DISTANCE = 3
 
@@ -8,7 +9,11 @@ schemlib_builder_npcf = {
 	max_pause_duration = 60, -- pause between jobs in processing steps (second
 	architect_rarity = 20, -- create own random building plan if nothing found -Rarity per step (each second)
 	walk_around_rarity = 20,  -- Rarity for walk around without job
+	--buildings = {}            -- list with buildings {name=, filename=}
 }
+
+local func = {} -- different functions
+local building_checktable = {}
 
 --------------------------------------
 -- Plan manager singleton
@@ -18,18 +23,16 @@ local plan_manager = {
 }
 schemlib_builder_npcf.plan_manager = plan_manager
 
-
 --------------------------------------
 -- Restore active WIP plan's
 --------------------------------------
 function plan_manager:restore()
 	self.stored_list = schemlib.save_restore.restore_data("/schemlib_builder_npcf.store")
 	for plan_id, entry in pairs(self.stored_list) do
-		local plan = schemlib.plan.new(plan_id, entry.anchor_pos)
-		plan.schemlib_builder_npcf_building_filename = entry.filename
-		plan:read_from_schem_file(modpath.."/buildings/"..entry.filename)
-		plan:apply_flood_with_air() -- is usually prepared in this way
-		plan_manager:add(plan_id, plan)
+		local filename = building_checktable[entry.filename]
+		if filename then
+			func.get_plan_from_file(entry.filename, modpath.."/buildings/"..entry.filename, plan_id, entry.anchor_pos)
+		end
 	end
 end
 
@@ -83,15 +86,60 @@ function plan_manager:activate_by_anchor(plan_id, anchor_pos)
 	plan.anchor_pos = anchor_pos
 	self.plan_list[new_plan_id] = plan
 	self:save()
+	return new_plan_id
 end
 
--- Restore data at init
-plan_manager:restore()
+--------------------------------------
+-- Functions
+--------------------------------------
+-- Get buildings list
+--------------------------------------
+function func.get_buildings_list()
+	local list = {}
+	local building_files = minetest.get_dir_list(modpath.."/buildings/", false)
+	for _, file in ipairs(building_files) do
+		table.insert(list, {name=file, filename=modpath.."/buildings/"..file})
+		building_checktable[file] = true
+	end
+	return list
+end
 
+--------------------------------------
+-- Load plan from file and configure them
+--------------------------------------
+function func.get_plan_from_file(name, filename, plan_id, anchor_pos)
+	plan_id = plan_id or name
+	local plan = schemlib.plan.new(plan_id, anchor_pos)
+	plan.schemlib_builder_npcf_building_filename = name
+	plan:read_from_schem_file(filename)
+	plan:apply_flood_with_air()
+	plan_manager:add(plan_id, plan)
+	if anchor_pos then
+		plan:set_status("build")
+	end
+	return plan
+end
+
+--------------------------------------
+-- Unassign plan if finished
+--------------------------------------
+function func.plan_finished(self)
+	local mv_obj = npcf.movement.getControl(self)
+	dprint("unassign building plan")
+	if self.build_plan then
+		plan_manager:set_finished(self.build_plan.plan_id)
+		plan_manager:save()
+	end
+	self.build_plan = nil
+	self.build_npc_ai = nil
+	self.metadata.build_plan_id = nil
+	self.build_plan_status = nil
+	mv_obj:stop()
+end
 --------------------------------------
 -- NPC Enhancements
 --------------------------------------
-local function check_plan(self)
+function func.check_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- check if current plan is still valid / get them
 	if self.metadata.build_plan_id then
@@ -100,18 +148,10 @@ local function check_plan(self)
 			self.build_plan_status = self.build_plan:get_status()
 			if self.build_plan_status == "finished" then
 				-- build is finished
-				plan_manager:set_finished(self.metadata.build_plan_id)
-				plan_manager:save()
-				self.build_plan = nil
-				self.build_npc_ai = nil
-				self.metadata.build_plan_id = nil
-				self.build_plan_status = nil
-				mv_obj:stop()
+				func.plan_finished(self)
 			end
 		else
-			self.build_npc_ai = nil
-			self.metadata.build_plan_id = nil
-			self.build_plan_status = nil
+			func.plan_finished(self)
 		end
 	end
 
@@ -142,17 +182,15 @@ local function check_plan(self)
 				if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
 					selected_plan.distance = distance
 					selected_plan.plan = plan
-					selected_plan.plan_id = plan_id
 				end
 			elseif plan.status == "new" then
 				selected_plan.distance = 100
 				selected_plan.plan = plan
-				selected_plan.plan_id = plan_id
 			end
 		end
 		self.build_plan = selected_plan.plan
-		self.metadata.build_plan_id = selected_plan.plan_id
 		if self.build_plan then
+			self.metadata.build_plan_id = self.build_plan.plan_id
 			self.build_plan_status = self.build_plan:get_status()
 			dprint("Existing plan selected", selected_plan.plan_id)
 		end
@@ -161,23 +199,15 @@ local function check_plan(self)
 			schemlib_builder_npcf.architect_rarity and
 			schemlib_builder_npcf.architect_rarity > 0 and
 			math.random(schemlib_builder_npcf.architect_rarity) == 1 then
-		local filepath = modpath.."/buildings/"
-		local files = minetest.get_dir_list(filepath, false)
-		local filename
-		if #files == 0 then
+		if #schemlib_builder_npcf.buildings == 0 then
 			print("ERROR: no files found")
 			return --error
-		else
-			filename = files[math.random(#files)]
-			dprint("File selected for build", filename)
 		end
-
-		self.metadata.build_plan_id = filename
-		self.build_plan = schemlib.plan.new(filename)
-		self.build_plan:read_from_schem_file(filepath..filename)
-		self.build_plan.schemlib_builder_npcf_building_filename = filename
-		plan_manager:add(self.metadata.build_plan_id , self.build_plan)
-		self.build_plan:apply_flood_with_air() -- is usually prepared in this way
+		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
+		dprint("File selected for build", building.filename)
+		func.get_plan_from_file(building.name, building.filename)
+		self.build_plan = func.get_plan_from_file(building.name, building.filename)
+		self.metadata.build_plan_id = self.build_plan.plan_id
 		dprint("building loaded. Nodes:", self.build_plan.data.nodecount)
 		return false -- small pause, do nothing anymore this step
 	else
@@ -187,7 +217,7 @@ local function check_plan(self)
 end
 
 
-local function plan_ready_to_build(self)
+function func.plan_ready_to_build(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- the anchor_pos missed, plan needs t
 	if self.build_plan_status == "new" then
@@ -211,8 +241,6 @@ local function plan_ready_to_build(self)
 
 		-- Prepare building plan to be build
 		self.metadata.build_plan_id = plan_manager:activate_by_anchor(self.metadata.build_plan_id, anchor_pos)
-		self.build_plan.plan_id = self.metadata.build_plan_id
-		self.build_plan:apply_flood_with_air()
 		self.build_plan:set_status("build")
 		self.build_plan_status = "build"
 		dprint("building ready to build at:", self.metadata.build_plan_id)
@@ -244,8 +272,8 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 		local mv_obj = npcf.movement.getControl(self)
 		mv_obj:mine_stop()
 		-- check plan
-		if check_plan(self) then
-			if plan_ready_to_build(self) then
+		if func.check_plan(self) then
+			if func.plan_ready_to_build(self) then
 				if not self.build_npc_ai or self.build_npc_ai.plan ~= self.build_plan then
 					self.build_npc_ai = schemlib.npc_ai.new(self.build_plan, BUILD_DISTANCE)
 				end
@@ -291,4 +319,7 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 	end,
 })
 
+-- Restore data at init
+schemlib_builder_npcf.buildings = func.get_buildings_list() -- at init!
+plan_manager:restore()
 
