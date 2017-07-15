@@ -22,6 +22,7 @@ function plan_manager:restore()
 	self.stored_list = schemlib.save_restore.restore_data("/schemlib_builder_npcf.store")
 	for plan_id, entry in pairs(self.stored_list) do
 		local plan = schemlib.plan.new(plan_id, entry.anchor_pos)
+		plan.schemlib_builder_npcf_building_filename = entry.filename
 		plan:read_from_schem_file(modpath.."/buildings/"..entry.filename)
 		plan:apply_flood_with_air() -- is usually prepared in this way
 		plan_manager:add(plan_id, plan)
@@ -34,10 +35,10 @@ end
 function plan_manager:save()
 	self.stored_list = {}
 	for plan_id, plan in pairs(self.plan_list) do
-		if plan.anchor_pos then
+		if plan.anchor_pos and plan.schemlib_builder_npcf_building_filename then
 			local entry = {
 				anchor_pos = plan.anchor_pos,
-				filename   = plan.filename
+				filename   = plan.schemlib_builder_npcf_building_filename
 			}
 			self.stored_list[plan_id] = entry
 		end
@@ -92,16 +93,20 @@ local function check_plan(self)
 	if self.metadata.build_plan_id then
 		self.build_plan = plan_manager:get(self.metadata.build_plan_id)
 		if self.build_plan then
-			if self.build_plan.anchor_pos and self.build_plan.data.nodecount == 0 then
+			self.build_plan_status = self.build_plan:get_status()
+			if self.build_plan_status == "finished" then
 				-- build is finished
 				plan_manager:set_finished(self.metadata.build_plan_id)
 				plan_manager:save()
 				self.build_plan = nil
 				self.build_npc_ai = nil
 				self.metadata.build_plan_id = nil
+				self.build_plan_status = nil
 			end
 		else
+			self.build_npc_ai = nil
 			self.metadata.build_plan_id = nil
+			self.build_plan_status = nil
 		end
 	end
 
@@ -128,14 +133,14 @@ local function check_plan(self)
 		local selected_plan = {}
 		for plan_id, plan in pairs(plan_manager.plan_list) do
 			dprint("plan exists:", plan_id, plan.anchor_pos)
-			if plan.anchor_pos then
+			if plan.status == "build" then -- already active
 				local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
 				if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
 					selected_plan.distance = distance
 					selected_plan.plan = plan
 					selected_plan.plan_id = plan_id
 				end
-			elseif not selected_plan.distance then
+			elseif plan.status == "new" then
 				selected_plan.distance = 100
 				selected_plan.plan = plan
 				selected_plan.plan_id = plan_id
@@ -143,8 +148,8 @@ local function check_plan(self)
 		end
 		self.build_plan = selected_plan.plan
 		self.metadata.build_plan_id = selected_plan.plan_id
-
 		if self.build_plan then
+			self.build_plan_status = self.build_plan:get_status()
 			dprint("Existing plan selected", selected_plan.plan_id)
 		end
 	end
@@ -163,8 +168,9 @@ local function check_plan(self)
 		self.metadata.build_plan_id = filename
 		self.build_plan = schemlib.plan.new(filename)
 		self.build_plan:read_from_schem_file(filepath..filename)
-		self.build_plan.filename = filename
+		self.build_plan.schemlib_builder_npcf_building_filename = filename
 		plan_manager:add(self.metadata.build_plan_id , self.build_plan)
+		self.build_plan:apply_flood_with_air() -- is usually prepared in this way
 		dprint("building loaded. Nodes:", self.build_plan.data.nodecount)
 		return false -- small pause, do nothing anymore this step
 	else
@@ -177,7 +183,7 @@ end
 local function plan_ready_to_build(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- the anchor_pos missed, plan needs t
-	if not self.build_plan.anchor_pos then
+	if self.build_plan_status == "new" then
 		local anchor_pos, error_pos =  self.build_plan:propose_anchor(vector.round(mv_obj.pos), true)
 		if anchor_pos == false then
 			dprint("not buildable nearly", minetest.pos_to_string(mv_obj.pos))
@@ -200,16 +206,15 @@ local function plan_ready_to_build(self)
 		self.metadata.build_plan_id = plan_manager:activate_by_anchor(self.metadata.build_plan_id, anchor_pos)
 		self.build_plan.plan_id = self.metadata.build_plan_id
 		self.build_plan:apply_flood_with_air()
+		self.build_plan:set_status("build")
+		self.build_plan_status = "build"
 		dprint("building ready to build at:", self.metadata.build_plan_id)
 		return false -- small pause, do nothing anymore this step
-	end
-
-	-- is buildable, anchor exists
-	if self.build_plan.anchor_pos then
+	elseif self.build_plan_status == "build" then
 		return true
+	else
+		return false
 	end
-
-	return false -- Do nothing anymore this NPC step
 end
 
 
