@@ -4,7 +4,11 @@ local modpath = minetest.get_modpath(minetest.get_current_modname())
 
 local BUILD_DISTANCE = 3
 
-schemlib_builder_npcf = {}
+schemlib_builder_npcf = {
+	max_pause_duration = 60, -- pause between jobs in processing steps (second
+	architect_rarity = 20, -- create own random building plan if nothing found -Rarity per step (each second)
+	walk_around_rarity = 20,  -- Rarity for walk around without job
+}
 
 --------------------------------------
 -- Plan manager singleton
@@ -102,6 +106,7 @@ local function check_plan(self)
 				self.build_npc_ai = nil
 				self.metadata.build_plan_id = nil
 				self.build_plan_status = nil
+				mv_obj:stop()
 			end
 		else
 			self.build_npc_ai = nil
@@ -110,11 +115,10 @@ local function check_plan(self)
 		end
 	end
 
-
 	-- The NPC is not a workaholic
-	if self.build_plan == nil then
+	if self.build_plan == nil and schemlib_builder_npcf.max_pause_duration > 0 then
 		if not self.metadata.schemlib_pause then
-			self.metadata.schemlib_pause = math.random(100)
+			self.metadata.schemlib_pause = math.random(schemlib_builder_npcf.max_pause_duration)
 			self.metadata.schemlib_pause_counter = 0
 			dprint("take a pause:", self.metadata.schemlib_pause)
 		end
@@ -153,7 +157,10 @@ local function check_plan(self)
 			dprint("Existing plan selected", selected_plan.plan_id)
 		end
 	end
-	if self.build_plan == nil then
+	if self.build_plan == nil and
+			schemlib_builder_npcf.architect_rarity and
+			schemlib_builder_npcf.architect_rarity > 0 and
+			math.random(schemlib_builder_npcf.architect_rarity) == 1 then
 		local filepath = modpath.."/buildings/"
 		local files = minetest.get_dir_list(filepath, false)
 		local filename
@@ -211,6 +218,7 @@ local function plan_ready_to_build(self)
 		dprint("building ready to build at:", self.metadata.build_plan_id)
 		return false -- small pause, do nothing anymore this step
 	elseif self.build_plan_status == "build" then
+		self.anchor_y = self.build_plan.anchor_pos.y --used to go down from building after finished
 		return true
 	else
 		return false
@@ -262,17 +270,21 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			end
 		else
 			-- walk around
-			if math.random(10) == 1 then
+			if schemlib_builder_npcf.walk_around_rarity and math.random(schemlib_builder_npcf.walk_around_rarity) == 1 then
 				local walk_to = vector.add(mv_obj.pos,{x=math.random(41)-21, y=0, z=math.random(41)-21})
+				if self.anchor_y then -- this is the ground high of the last building
+					walk_to.y = self.anchor_y
+				end
 				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
 				if walk_to then
 					walk_to.y = walk_to.y + 1
 					mv_obj:walk(walk_to, 1, {teleport_on_stuck = true})
+					self.anchor_y = nil -- used once
 					dprint("walk to", minetest.pos_to_string(walk_to))
 				end
-			elseif math.random(100) == 1 then
-				mv_obj:sit()
 			elseif math.random(200) == 1 then
+				mv_obj:sit()
+			elseif math.random(400) == 1 then
 				mv_obj:lay()
 			end
 		end
