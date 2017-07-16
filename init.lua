@@ -1,5 +1,5 @@
---local dprint = print
-local dprint = function() return end
+local dprint = print
+--local dprint = function() return end
 local modpath = minetest.get_modpath(minetest.get_current_modname())
 local filepath = modpath.."/buildings/"
 
@@ -125,7 +125,7 @@ end
 --------------------------------------
 function func.plan_finished(self)
 	local mv_obj = npcf.movement.getControl(self)
-	dprint("unassign building plan")
+	dprint(self.npc_id, "unassign building plan")
 	if self.build_plan then
 		plan_manager:set_finished(self.build_plan.plan_id)
 		plan_manager:save()
@@ -143,24 +143,28 @@ function func.check_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- check if current plan is still valid / get them
 	if self.metadata.build_plan_id then
+		dprint(self.npc_id,"check existing plan", self.metadata.build_plan_id )
 		self.build_plan = plan_manager:get(self.metadata.build_plan_id)
 		if self.build_plan then
 			self.build_plan_status = self.build_plan:get_status()
 			if self.build_plan_status == "finished" then
+				dprint(self.npc_id,"plan finished")
 				-- build is finished
 				func.plan_finished(self)
 			end
 		else
+			dprint(self.npc_id,"invalid plan")
 			func.plan_finished(self)
 		end
 	end
 
 	-- The NPC is not a workaholic
 	if self.build_plan == nil and schemlib_builder_npcf.max_pause_duration > 0 then
+		dprint(self.npc_id,"check for pause")
 		if not self.metadata.schemlib_pause then
 			self.metadata.schemlib_pause = math.random(schemlib_builder_npcf.max_pause_duration)
 			self.metadata.schemlib_pause_counter = 0
-			dprint("take a pause:", self.metadata.schemlib_pause)
+			dprint(self.npc_id,"take a pause:", self.metadata.schemlib_pause)
 		end
 		self.metadata.schemlib_pause_counter = self.metadata.schemlib_pause_counter + 1
 		if self.metadata.schemlib_pause_counter < self.metadata.schemlib_pause then
@@ -174,9 +178,10 @@ function func.check_plan(self)
 
 	if self.build_plan == nil then
 		-- select existing plan
+		dprint(self.npc_id,"select new existing plan")
 		local selected_plan = {}
 		for plan_id, plan in pairs(plan_manager.plan_list) do
-			dprint("plan exists:", plan_id, plan.anchor_pos)
+			dprint(self.npc_id,"plan exists:", plan_id, plan.anchor_pos)
 			if plan.status == "build" then -- already active
 				local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
 				if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
@@ -192,7 +197,7 @@ function func.check_plan(self)
 		if self.build_plan then
 			self.metadata.build_plan_id = self.build_plan.plan_id
 			self.build_plan_status = self.build_plan:get_status()
-			dprint("Existing plan selected", selected_plan.plan_id)
+			dprint(self.npc_id,"Existing plan selected", selected_plan.plan_id)
 		end
 	end
 	if self.build_plan == nil and
@@ -204,11 +209,11 @@ function func.check_plan(self)
 			return --error
 		end
 		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
-		dprint("File selected for build", building.filename)
+		dprint(self.npc_id,"File selected for build", building.filename)
 		func.get_plan_from_file(building.name, building.filename)
 		self.build_plan = func.get_plan_from_file(building.name, building.filename)
 		self.metadata.build_plan_id = self.build_plan.plan_id
-		dprint("building loaded. Nodes:", self.build_plan.data.nodecount)
+		dprint(self.npc_id,"building loaded. Nodes:", self.build_plan.data.nodecount)
 		return false -- small pause, do nothing anymore this step
 	else
 		-- use existing plan, do the next step
@@ -223,7 +228,7 @@ function func.plan_ready_to_build(self)
 	if self.build_plan_status == "new" then
 		local anchor_pos, error_pos =  self.build_plan:propose_anchor(vector.round(mv_obj.pos), true)
 		if anchor_pos == false then
-			dprint("not buildable nearly", minetest.pos_to_string(mv_obj.pos))
+			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(mv_obj.pos))
 
 			if math.random(4) == 1 then
 				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), 10))
@@ -232,18 +237,18 @@ function func.plan_ready_to_build(self)
 				if walk_to then
 					walk_to.y = walk_to.y + 1
 					mv_obj:walk(walk_to, 1, {teleport_on_stuck = true})
-					dprint("walk to", minetest.pos_to_string(walk_to))
+					dprint(self.npc_id,"walk to", minetest.pos_to_string(walk_to))
 				end
 			end
 			return false
 		end
-		dprint("proposed anchor", minetest.pos_to_string(anchor_pos), "nearly", minetest.pos_to_string(mv_obj.pos))
+		dprint(self.npc_id,"proposed anchor", minetest.pos_to_string(anchor_pos), "nearly", minetest.pos_to_string(mv_obj.pos))
 
 		-- Prepare building plan to be build
 		self.metadata.build_plan_id = plan_manager:activate_by_anchor(self.metadata.build_plan_id, anchor_pos)
 		self.build_plan:set_status("build")
 		self.build_plan_status = "build"
-		dprint("building ready to build at:", self.metadata.build_plan_id)
+		dprint(self.npc_id,"building ready to build at:", self.metadata.build_plan_id)
 		return false -- small pause, do nothing anymore this step
 	elseif self.build_plan_status == "build" then
 		self.anchor_y = self.build_plan.anchor_pos.y --used to go down from building after finished
@@ -274,25 +279,28 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 		-- check plan
 		if func.check_plan(self) then
 			if func.plan_ready_to_build(self) then
+				dprint(self.npc_id,"plan ready for  build, get the next node")
 				if not self.build_npc_ai or self.build_npc_ai.plan ~= self.build_plan then
 					self.build_npc_ai = schemlib.npc_ai.new(self.build_plan, BUILD_DISTANCE)
 				end
 				self.target_node = self.build_npc_ai:plan_target_get(mv_obj.pos)
 			else
+				dprint(self.npc_id,"plan not ready for  build")
 				self.target_node = nil
 			end
 		else
 			--no target without plan
+			dprint(self.npc_id,"no plan assigned")
 			self.target_node = nil
 		end
-
+		print(self.npc_id,"target selected", tostring(self.target_node))
 		if self.target_node then
 			-- at work
 			local targetpos = self.target_node:get_world_pos()
 			mv_obj:walk(targetpos, 1, {teleport_on_stuck = true})
-			dprint("work at:", minetest.pos_to_string(targetpos), self.target_node.name, "my pos", minetest.pos_to_string(mv_obj.pos))
+			dprint(self.npc_id,"work at:", minetest.pos_to_string(targetpos), self.target_node.name, "my pos", minetest.pos_to_string(mv_obj.pos))
 			if vector.distance(mv_obj.pos, targetpos) <= BUILD_DISTANCE then
-				dprint("build:", minetest.pos_to_string(targetpos))
+				dprint(self.npc_id,"build:", minetest.pos_to_string(targetpos))
 				mv_obj:mine()
 				mv_obj:set_walk_parameter({teleport_on_stuck = false})
 				self.build_npc_ai:place_node(self.target_node)
@@ -312,7 +320,7 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 					walk_to.y = walk_to.y + 1
 					mv_obj:walk(walk_to, 1, {teleport_on_stuck = true})
 					self.anchor_y = nil -- used once
-					dprint("walk to", minetest.pos_to_string(walk_to))
+					dprint(self.npc_id,"walk to", minetest.pos_to_string(walk_to))
 				end
 			elseif math.random(200) == 1 then
 				mv_obj:sit()
