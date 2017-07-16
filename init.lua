@@ -278,6 +278,8 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 					self.build_npc_ai = schemlib.npc_ai.new(self.build_plan, BUILD_DISTANCE)
 				end
 				self.target_node = self.build_npc_ai:plan_target_get(mv_obj.pos)
+			else
+				self.target_node = nil
 			end
 		else
 			--no target without plan
@@ -298,7 +300,9 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			end
 		else
 			-- walk around
-			if schemlib_builder_npcf.walk_around_rarity and math.random(schemlib_builder_npcf.walk_around_rarity) == 1 then
+			if schemlib_builder_npcf.walk_around_rarity and
+					schemlib_builder_npcf.walk_around_rarity > 0 and
+					math.random(schemlib_builder_npcf.walk_around_rarity) == 1 then
 				local walk_to = vector.add(mv_obj.pos,{x=math.random(41)-21, y=0, z=math.random(41)-21})
 				if self.anchor_y then -- this is the ground high of the last building
 					walk_to.y = self.anchor_y
