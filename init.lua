@@ -1,5 +1,5 @@
-local dprint = print
---local dprint = function() return end
+--local dprint = print
+local dprint = function() return end
 local modpath = minetest.get_modpath(minetest.get_current_modname())
 local filepath = modpath.."/buildings/"
 
@@ -210,7 +210,6 @@ function func.check_plan(self)
 		end
 		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
 		dprint(self.npc_id,"File selected for build", building.filename)
-		func.get_plan_from_file(building.name, building.filename)
 		self.build_plan = func.get_plan_from_file(building.name, building.filename)
 		self.metadata.build_plan_id = self.build_plan.plan_id
 		dprint(self.npc_id,"building loaded. Nodes:", self.build_plan.data.nodecount)
@@ -293,7 +292,7 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			dprint(self.npc_id,"no plan assigned")
 			self.target_node = nil
 		end
-		print(self.npc_id,"target selected", tostring(self.target_node))
+		dprint(self.npc_id,"target selected", tostring(self.target_node))
 		if self.target_node then
 			-- at work
 			local targetpos = self.target_node:get_world_pos()
