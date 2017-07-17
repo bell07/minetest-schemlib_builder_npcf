@@ -15,6 +15,7 @@ schemlib_builder_npcf = {
 local func = {} -- different functions
 local building_checktable = {}
 
+local tmp_next_plan
 --------------------------------------
 -- Plan manager singleton
 --------------------------------------
@@ -42,7 +43,7 @@ end
 function plan_manager:save()
 	self.stored_list = {}
 	for plan_id, plan in pairs(self.plan_list) do
-		if plan.anchor_pos and plan.schemlib_builder_npcf_building_filename then
+		if plan.schemlib_builder_npcf_building_filename then
 			local entry = {
 				anchor_pos = plan.anchor_pos,
 				filename   = plan.schemlib_builder_npcf_building_filename
@@ -63,30 +64,31 @@ end
 --------------------------------------
 -- Set the plan finished
 --------------------------------------
-function plan_manager:set_finished(plan_id)
-	self.plan_list[plan_id] = nil
+function plan_manager:set_finished(plan)
+	self.plan_list[plan.plan_id] = nil
+	plan_manager:save()
 end
 
 --------------------------------------
 -- Add new plan to the list
 --------------------------------------
-function plan_manager:add(plan_id, plan)
-	self.plan_list[plan_id] = plan
+function plan_manager:add(plan)
+	self.plan_list[plan.plan_id] = plan
 end
 
 --------------------------------------
 -- set anchor and rename to get active
 --------------------------------------
-function plan_manager:activate_by_anchor(plan_id, anchor_pos)
-	local plan = self.plan_list[plan_id]
+function plan_manager:activate_by_anchor(anchor_pos)
+	local plan = tmp_next_plan
+	tmp_next_plan = nil
 	local new_plan_id = minetest.pos_to_string(anchor_pos)
-
-	self.plan_list[plan_id] = nil
-	plan.plan_id = plan_id
+	plan.plan_id = new_plan_id
 	plan.anchor_pos = anchor_pos
+	plan:set_status("build")
 	self.plan_list[new_plan_id] = plan
 	self:save()
-	return new_plan_id
+	return plan
 end
 
 --------------------------------------
@@ -113,9 +115,9 @@ function func.get_plan_from_file(name, filename, plan_id, anchor_pos)
 	plan.schemlib_builder_npcf_building_filename = name
 	plan:read_from_schem_file(filename)
 	plan:apply_flood_with_air()
-	plan_manager:add(plan_id, plan)
 	if anchor_pos then
 		plan:set_status("build")
+		plan_manager:add(plan)
 	end
 	return plan
 end
@@ -123,12 +125,11 @@ end
 --------------------------------------
 -- Unassign plan if finished
 --------------------------------------
-function func.plan_finished(self)
+function func.plan_finished(self, plan)
 	local mv_obj = npcf.movement.getControl(self)
 	dprint(self.npc_id, "unassign building plan")
-	if self.build_plan then
-		plan_manager:set_finished(self.build_plan.plan_id)
-		plan_manager:save()
+	if plan then
+		plan_manager:set_finished(plan)
 	end
 	self.build_plan = nil
 	self.build_npc_ai = nil
@@ -141,8 +142,8 @@ end
 --------------------------------------
 function func.check_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
-	-- check if current plan is still valid / get them
 	if self.metadata.build_plan_id then
+		-- check if current plan is still valid / get them
 		dprint(self.npc_id,"check existing plan", self.metadata.build_plan_id )
 		self.build_plan = plan_manager:get(self.metadata.build_plan_id)
 		if self.build_plan then
@@ -150,7 +151,7 @@ function func.check_plan(self)
 			if self.build_plan_status == "finished" then
 				dprint(self.npc_id,"plan finished")
 				-- build is finished
-				func.plan_finished(self)
+				func.plan_finished(self, self.build_plan)
 			end
 		else
 			dprint(self.npc_id,"invalid plan")
@@ -176,20 +177,15 @@ function func.check_plan(self)
 		self.metadata.schemlib_pause = nil
 	end
 
-	if self.build_plan == nil or self.build_plan_status == "new" then
-		-- select existing plan
-		dprint(self.npc_id,"select new existing plan")
+	if not self.build_plan then
+		-- no plan assigned, check for neighboar plans / select existing plan
+		dprint(self.npc_id,"select existing plan")
 		local selected_plan = {}
 		for plan_id, plan in pairs(plan_manager.plan_list) do
 			dprint(self.npc_id,"plan exists:", plan_id, plan.anchor_pos)
-			if plan.status == "build" then -- already active
-				local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
-				if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
-					selected_plan.distance = distance
-					selected_plan.plan = plan
-				end
-			elseif plan.status == "new" then
-				selected_plan.distance = 100
+			local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
+			if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
+				selected_plan.distance = distance
 				selected_plan.plan = plan
 			end
 		end
@@ -200,20 +196,22 @@ function func.check_plan(self)
 			dprint(self.npc_id,"Existing plan selected", selected_plan.plan_id)
 		end
 	end
-	if self.build_plan == nil and
-			schemlib_builder_npcf.architect_rarity and
-			schemlib_builder_npcf.architect_rarity > 0 and
-			math.random(schemlib_builder_npcf.architect_rarity) == 1 then
-		if #schemlib_builder_npcf.buildings == 0 then
-			print("ERROR: no files found")
-			return --error
+
+	if not self.build_plan and not tmp_next_plan then
+		-- no plan in list - and no plan temporary loaded - load them (maybe)
+		if schemlib_builder_npcf.architect_rarity and
+				schemlib_builder_npcf.architect_rarity > 0 and
+				math.random(schemlib_builder_npcf.architect_rarity) == 1 then
+			if #schemlib_builder_npcf.buildings == 0 then
+				print("ERROR: no files found")
+				return --error
+			end
+			local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
+			dprint(self.npc_id,"File selected for build", building.filename)
+			tmp_next_plan = func.get_plan_from_file(building.name, building.filename)
+			dprint(self.npc_id,"building loaded. Nodes:", tmp_next_plan.data.nodecount)
 		end
-		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
-		dprint(self.npc_id,"File selected for build", building.filename)
-		self.build_plan = func.get_plan_from_file(building.name, building.filename)
-		self.metadata.build_plan_id = self.build_plan.plan_id
-		dprint(self.npc_id,"building loaded. Nodes:", self.build_plan.data.nodecount)
-		return false -- small pause, do nothing anymore this step
+		return false --do nothing anymore this step
 	else
 		-- use existing plan, do the next step
 		return true
@@ -223,16 +221,28 @@ end
 
 function func.plan_ready_to_build(self)
 	local mv_obj = npcf.movement.getControl(self)
-	-- the anchor_pos missed, plan needs t
-	if self.build_plan_status == "new" then
-		if math.random(10) ~= 1 then -- do not penetrate the map by propose_anchor()
-			return false
+	if self.build_plan then
+		-- assigned plan exists
+		return true
+	elseif tmp_next_plan and math.random(10) == 1 then
+		-- dummy plan exists, search for anchor, but do not penetrate the map by propose_anchor()
+		local chk_pos = vector.round(mv_obj.pos)
+		local anchor_pos, error_pos
+		-- check for possible overlaps with other plans
+		for plan_id, plan in pairs(plan_manager.plan_list) do
+			if plan:contains(chk_pos) then
+				error_pos = plan:get_random_plan_pos():get_world_pos()
+				break
+			end
 		end
-		local anchor_pos, error_pos =  self.build_plan:propose_anchor(vector.round(mv_obj.pos), true)
+		if not error_pos then
+			-- take the anchor proposal
+			anchor_pos, error_pos =  tmp_next_plan:propose_anchor(chk_pos, true)
+		end
 		if anchor_pos == false then
-			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(mv_obj.pos))
-
-			if math.random(4) == 1 then
+			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(chk_pos))
+			if math.random(4) == 1 and error_pos then
+				-- walk away from error position
 				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), math.random(16)))
 				walk_to.y = mv_obj.pos.y
 				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
@@ -247,17 +257,13 @@ function func.plan_ready_to_build(self)
 		dprint(self.npc_id,"proposed anchor", minetest.pos_to_string(anchor_pos), "nearly", minetest.pos_to_string(mv_obj.pos))
 
 		-- Prepare building plan to be build
-		self.metadata.build_plan_id = plan_manager:activate_by_anchor(self.metadata.build_plan_id, anchor_pos)
-		self.build_plan:set_status("build")
-		self.build_plan_status = "build"
+		self.build_plan = plan_manager:activate_by_anchor(anchor_pos)
+		self.metadata.build_plan_id = self.build_plan.plan_id
+		self.build_plan_status = self.build_plan.status
 		dprint(self.npc_id,"building ready to build at:", self.metadata.build_plan_id)
 		return false -- small pause, do nothing anymore this step
-	elseif self.build_plan_status == "build" then
-		self.anchor_y = self.build_plan.anchor_pos.y --used to go down from building after finished
-		return true
-	else
-		return false
 	end
+	return false
 end
 
 
