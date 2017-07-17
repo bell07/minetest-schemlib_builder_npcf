@@ -243,7 +243,8 @@ function func.plan_ready_to_build(self)
 			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(chk_pos))
 			if math.random(4) == 1 and error_pos then
 				-- walk away from error position
-				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), math.random(16)))
+				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), math.random(8)))
+				walk_to =vector.add(walk_to, {x=math.random(41)-21, y=0, z=math.random(41)-21})
 				walk_to.y = mv_obj.pos.y
 				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
 				if walk_to then
