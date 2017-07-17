@@ -6,10 +6,12 @@ local filepath = modpath.."/buildings/"
 local BUILD_DISTANCE = 3
 
 schemlib_builder_npcf = {
-	max_pause_duration = 60, -- pause between jobs in processing steps (second
-	architect_rarity = 20, -- create own random building plan if nothing found -Rarity per step (each second)
-	walk_around_rarity = 20,  -- Rarity for walk around without job
-	--buildings = {}            -- list with buildings {name=, filename=}
+	max_pause_duration = 10,  -- pause between jobs in processing steps (second
+	architect_rarity = 3,    -- create own random building plan if nothing found
+	walk_around_rarity = 10,  -- Rarity for direction change in walk around without job
+	plan_max_distance = 100,  -- Maximal distance to the next plan
+	check_anchor_rarity = 10, -- Rarity of check for anchor call --10
+	--buildings = {}          -- list with buildings {name=, filename=}
 }
 
 local func = {} -- different functions
@@ -58,7 +60,14 @@ end
 -- Get known plan
 --------------------------------------
 function plan_manager:get(plan_id)
-	return self.plan_list[plan_id]
+	local plan = self.plan_list[plan_id]
+	if plan and plan:get_status() == "finished" then
+		dprint(self.npc_id, "plan finished, remove from npc plan manager")
+		self:set_finished(plan)
+		return nil
+	else
+		return plan
+	end
 end
 
 --------------------------------------
@@ -123,40 +132,15 @@ function func.get_plan_from_file(name, filename, plan_id, anchor_pos)
 end
 
 --------------------------------------
--- Unassign plan if finished
---------------------------------------
-function func.plan_finished(self, plan)
-	local mv_obj = npcf.movement.getControl(self)
-	dprint(self.npc_id, "unassign building plan")
-	if plan then
-		plan_manager:set_finished(plan)
-	end
-	self.build_plan = nil
-	self.build_npc_ai = nil
-	self.metadata.build_plan_id = nil
-	self.build_plan_status = nil
-	mv_obj:stop()
-end
---------------------------------------
 -- NPC Enhancements
 --------------------------------------
-function func.check_plan(self)
+-- Get exsisting plan prefering the already assigned
+function func.get_existing_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
-	if self.metadata.build_plan_id then
+	if self.metadata.build_plan_id and (not tmp_next_plan or self.build_plan ~= tmp_next_plan) then
 		-- check if current plan is still valid / get them
 		dprint(self.npc_id,"check existing plan", self.metadata.build_plan_id )
 		self.build_plan = plan_manager:get(self.metadata.build_plan_id)
-		if self.build_plan then
-			self.build_plan_status = self.build_plan:get_status()
-			if self.build_plan_status == "finished" then
-				dprint(self.npc_id,"plan finished")
-				-- build is finished
-				func.plan_finished(self, self.build_plan)
-			end
-		else
-			dprint(self.npc_id,"invalid plan")
-			func.plan_finished(self)
-		end
 	end
 
 	-- The NPC is not a workaholic
@@ -170,68 +154,57 @@ function func.check_plan(self)
 		self.metadata.schemlib_pause_counter = self.metadata.schemlib_pause_counter + 1
 		if self.metadata.schemlib_pause_counter < self.metadata.schemlib_pause then
 			-- it is pause time
-			return false
+			return
 		end
 	else
 		-- reset pause counter if plan exists to allow pause next time
 		self.metadata.schemlib_pause = nil
 	end
 
-	if not self.build_plan then
+	if not self.build_plan or self.build_plan == tmp_next_plan then
 		-- no plan assigned, check for neighboar plans / select existing plan
 		dprint(self.npc_id,"select existing plan")
 		local selected_plan = {}
-		for plan_id, plan in pairs(plan_manager.plan_list) do
-			dprint(self.npc_id,"plan exists:", plan_id, plan.anchor_pos)
-			local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
-			if distance < 100 and (not selected_plan.distance or selected_plan.distance > distance) then
-				selected_plan.distance = distance
-				selected_plan.plan = plan
+		for plan_id, _ in pairs(plan_manager.plan_list) do
+			local plan = plan_manager:get(plan_id)
+			if plan then
+				local distance = vector.distance(plan.anchor_pos, mv_obj.pos)
+				dprint(self.npc_id,"plan exists:", plan_id, plan.anchor_pos, distance)
+				if distance < schemlib_builder_npcf.plan_max_distance and (not selected_plan.distance or selected_plan.distance > distance) then
+					selected_plan.distance = distance
+					selected_plan.plan = plan
+				end
 			end
 		end
-		self.build_plan = selected_plan.plan
+		self.build_plan = selected_plan.plan or self.build_plan
 		if self.build_plan then
 			self.metadata.build_plan_id = self.build_plan.plan_id
-			self.build_plan_status = self.build_plan:get_status()
 			dprint(self.npc_id,"Existing plan selected", selected_plan.plan_id)
 		end
-	end
-
-	if not self.build_plan and not tmp_next_plan then
-		-- no plan in list - and no plan temporary loaded - load them (maybe)
-		if schemlib_builder_npcf.architect_rarity and
-				schemlib_builder_npcf.architect_rarity > 0 and
-				math.random(schemlib_builder_npcf.architect_rarity) == 1 then
-			if #schemlib_builder_npcf.buildings == 0 then
-				print("ERROR: no files found")
-				return --error
-			end
-			local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
-			dprint(self.npc_id,"File selected for build", building.filename)
-			tmp_next_plan = func.get_plan_from_file(building.name, building.filename)
-			dprint(self.npc_id,"building loaded. Nodes:", tmp_next_plan.data.nodecount)
-		end
-		return false --do nothing anymore this step
-	else
-		-- use existing plan, do the next step
-		return true
 	end
 end
 
 
-function func.plan_ready_to_build(self)
+function func.create_new_plan(self)
 	local mv_obj = npcf.movement.getControl(self)
-	if self.build_plan then
-		-- assigned plan exists
-		return true
-	elseif tmp_next_plan and math.random(10) == 1 then
+	if not tmp_next_plan then
+		-- no plan in list - and no plan temporary loaded - load them (maybe)
+		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
+		dprint(self.npc_id,"File selected for build", building.filename)
+		tmp_next_plan = func.get_plan_from_file(building.name, building.filename)
+		dprint(self.npc_id,"building loaded. Nodes:", tmp_next_plan.data.nodecount)
+		return
+	end
+
+	if math.random(schemlib_builder_npcf.check_anchor_rarity) == 1 then
 		-- dummy plan exists, search for anchor, but do not penetrate the map by propose_anchor()
 		local chk_pos = vector.round(mv_obj.pos)
 		local anchor_pos, error_pos
 		-- check for possible overlaps with other plans
-		for plan_id, plan in pairs(plan_manager.plan_list) do
-			if plan:contains(chk_pos) then
-				error_pos = plan:get_random_plan_pos():get_world_pos()
+		for plan_id, _ in pairs(plan_manager.plan_list) do
+			local plan = plan_manager:get(plan_id)
+			if tmp_next_plan:check_overlap(plan:get_world_minp(), plan:get_world_maxp(), chk_pos) then
+				error_pos = plan:get_world_pos(plan:get_random_plan_pos())
 				break
 			end
 		end
@@ -239,32 +212,21 @@ function func.plan_ready_to_build(self)
 			-- take the anchor proposal
 			anchor_pos, error_pos =  tmp_next_plan:propose_anchor(chk_pos, true)
 		end
-		if anchor_pos == false then
+		if not anchor_pos then
 			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(chk_pos))
-			if math.random(4) == 1 and error_pos then
+			if error_pos then
 				-- walk away from error position
-				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), math.random(8)))
-				walk_to =vector.add(walk_to, {x=math.random(41)-21, y=0, z=math.random(41)-21})
-				walk_to.y = mv_obj.pos.y
-				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
-				if walk_to then
-					walk_to.y = walk_to.y + 1
-					mv_obj:walk(walk_to, 1, {teleport_on_stuck = true})
-					dprint(self.npc_id,"walk to", minetest.pos_to_string(walk_to))
-				end
+				self.prefered_direction = vector.direction(error_pos, mv_obj.pos)
 			end
-			return false
+			return
 		end
 		dprint(self.npc_id,"proposed anchor", minetest.pos_to_string(anchor_pos), "nearly", minetest.pos_to_string(mv_obj.pos))
 
 		-- Prepare building plan to be build
 		self.build_plan = plan_manager:activate_by_anchor(anchor_pos)
 		self.metadata.build_plan_id = self.build_plan.plan_id
-		self.build_plan_status = self.build_plan.status
 		dprint(self.npc_id,"building ready to build at:", self.metadata.build_plan_id)
-		return false -- small pause, do nothing anymore this step
 	end
-	return false
 end
 
 
@@ -279,29 +241,29 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			return
 		end
 		self.timer = 0
-		if not self.my_ai_data then
-			self.my_ai_data = {}
-		end
-
 		local mv_obj = npcf.movement.getControl(self)
 		mv_obj:mine_stop()
+
 		-- check plan
-		if func.check_plan(self) then
-			if func.plan_ready_to_build(self) then
-				dprint(self.npc_id,"plan ready for  build, get the next node")
-				if not self.build_npc_ai or self.build_npc_ai.plan ~= self.build_plan then
-					self.build_npc_ai = schemlib.npc_ai.new(self.build_plan, BUILD_DISTANCE)
-				end
-				self.target_node = self.build_npc_ai:plan_target_get(mv_obj.pos)
-			else
-				dprint(self.npc_id,"plan not ready for  build")
-				self.target_node = nil
+		func.get_existing_plan(self)
+		if self.build_plan then
+			dprint(self.npc_id,"plan ready for  build, get the next node")
+			if not self.build_npc_ai or self.build_npc_ai.plan ~= self.build_plan then
+				self.build_npc_ai = schemlib.npc_ai.new(self.build_plan, BUILD_DISTANCE)
 			end
-		else
-			--no target without plan
-			dprint(self.npc_id,"no plan assigned")
+			self.target_node = self.build_npc_ai:plan_target_get(mv_obj.pos)
+		end
+		if not self.build_plan and schemlib_builder_npcf.architect_rarity > 0 and
+				math.random(schemlib_builder_npcf.architect_rarity) == 1 then
+			func.create_new_plan(self)
 			self.target_node = nil
 		end
+
+		if not self.build_plan then
+			dprint(self.npc_id,"plan not ready for build, or NPC does a pause")
+			self.target_node = nil
+		end
+
 		dprint(self.npc_id,"target selected", tostring(self.target_node))
 		if self.target_node then
 			-- at work
@@ -317,13 +279,57 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			end
 		else
 			-- walk around
-			if schemlib_builder_npcf.walk_around_rarity and
-					schemlib_builder_npcf.walk_around_rarity > 0 and
-					math.random(schemlib_builder_npcf.walk_around_rarity) == 1 then
+
+			-- check the timer
+			if self.metadata.walk_around_timer then
+				self.metadata.walk_around_counter = self.metadata.walk_around_counter + 1
+				if self.metadata.walk_around_counter > self.metadata.walk_around_timer then
+					self.walk_around_timer = nil
+				end
+			end
+
+			if schemlib_builder_npcf.walk_around_rarity > 0 and
+					(math.random(schemlib_builder_npcf.walk_around_rarity) == 1 and not self.walk_around_timer) then
+				-- set the timer
+				self.metadata.walk_around_timer = math.random(schemlib_builder_npcf.max_pause_duration)
+				self.metadata.walk_around_counter = 0
+
+				self.metadata.walk_around_counter = self.metadata.walk_around_counter + 1
+				if self.metadata.walk_around_counter > self.metadata.walk_around_timer then
+					self.walk_around_timer = nil
+				end
+
 				local walk_to = vector.add(mv_obj.pos,{x=math.random(41)-21, y=0, z=math.random(41)-21})
-				if self.anchor_y then -- this is the ground high of the last building
+
+				-- create prefered direction to nearest player
+				if math.random(100) == 1 then
+					local nearest_pos, nearest_distance
+					for _, player in ipairs(minetest.get_connected_players()) do
+						local playerpos  = player:getpos()
+						local distance = vector.distance(mv_obj.pos, playerpos)
+						if distance < schemlib_builder_npcf.plan_max_distance and
+								(not nearest_pos or (nearest_distance > distance)) then
+							nearest_pos = playerpos
+							nearest_distance = distance
+						end
+					end
+					if nearest_pos then
+						self.prefered_direction = vector.direction(mv_obj.pos, nearest_pos)
+					end
+				end
+
+				-- prefer the streight way
+				if not self.prefered_direction then
+					local yaw = mv_obj.yaw + math.pi * 0.5
+					self.prefered_direction = {x=math.cos(yaw), y=0, z=math.sin(yaw)}
+				end
+				walk_to = vector.add(walk_to, vector.multiply(self.prefered_direction, 10))
+
+				-- prefer the high of the ground under the last building is built, to go down
+				if self.anchor_y then
 					walk_to.y = self.anchor_y
 				end
+
 				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
 				if walk_to then
 					walk_to.y = walk_to.y + 1
