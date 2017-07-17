@@ -176,7 +176,7 @@ function func.check_plan(self)
 		self.metadata.schemlib_pause = nil
 	end
 
-	if self.build_plan == nil then
+	if self.build_plan == nil or self.build_plan_status == "new" then
 		-- select existing plan
 		dprint(self.npc_id,"select new existing plan")
 		local selected_plan = {}
@@ -225,12 +225,15 @@ function func.plan_ready_to_build(self)
 	local mv_obj = npcf.movement.getControl(self)
 	-- the anchor_pos missed, plan needs t
 	if self.build_plan_status == "new" then
+		if math.random(10) ~= 1 then -- do not penetrate the map by propose_anchor()
+			return false
+		end
 		local anchor_pos, error_pos =  self.build_plan:propose_anchor(vector.round(mv_obj.pos), true)
 		if anchor_pos == false then
 			dprint(self.npc_id,"not buildable nearly", minetest.pos_to_string(mv_obj.pos))
 
 			if math.random(4) == 1 then
-				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), 10))
+				local walk_to = vector.add(mv_obj.pos, vector.multiply(vector.direction(error_pos, mv_obj.pos), math.random(16)))
 				walk_to.y = mv_obj.pos.y
 				walk_to = npcf.movement.functions.get_walkable_pos(walk_to, 3)
 				if walk_to then
