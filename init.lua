@@ -7,8 +7,9 @@ local BUILD_DISTANCE = 3
 
 schemlib_builder_npcf = {
 	max_pause_duration = 10,  -- pause between jobs in processing steps (second
-	architect_rarity = 3,    -- create own random building plan if nothing found
-	walk_around_rarity = 10,  -- Rarity for direction change in walk around without job
+	architect_rarity = 2,    -- create own random building plan if nothing found
+	walk_around_rarity = 3,  -- Rarity for direction change in walk around without job
+	walk_around_duration = 10, -- Rarity for direction change in walk around without job
 	plan_max_distance = 100,  -- Maximal distance to the next plan
 	check_anchor_rarity = 10, -- Rarity of check for anchor call --10
 	--buildings = {}          -- list with buildings {name=, filename=}
@@ -291,7 +292,7 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 			if schemlib_builder_npcf.walk_around_rarity > 0 and
 					(math.random(schemlib_builder_npcf.walk_around_rarity) == 1 and not self.walk_around_timer) then
 				-- set the timer
-				self.metadata.walk_around_timer = math.random(schemlib_builder_npcf.max_pause_duration)
+				self.metadata.walk_around_timer = math.random(schemlib_builder_npcf.walk_around_duration)
 				self.metadata.walk_around_counter = 0
 
 				self.metadata.walk_around_counter = self.metadata.walk_around_counter + 1
@@ -302,7 +303,7 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 				local walk_to = vector.add(mv_obj.pos,{x=math.random(41)-21, y=0, z=math.random(41)-21})
 
 				-- create prefered direction to nearest player
-				if math.random(100) == 1 then
+				if math.random(10) == 1 then
 					local nearest_pos, nearest_distance
 					for _, player in ipairs(minetest.get_connected_players()) do
 						local playerpos  = player:getpos()
@@ -311,6 +312,24 @@ npcf:register_npc("schemlib_builder_npcf:builder" ,{
 								(not nearest_pos or (nearest_distance > distance)) then
 							nearest_pos = playerpos
 							nearest_distance = distance
+						end
+					end
+					if nearest_pos then
+						self.prefered_direction = vector.direction(mv_obj.pos, nearest_pos)
+					end
+				end
+
+				-- create prefered direction to nearest other builder npc
+				if math.random(10) == 1 then
+					local nearest_pos, nearest_distance
+					for _, npc in pairs(npcf.npcs) do
+						if npc.name == "schemlib_builder_npcf:builder" and npc.pos then
+							local distance = vector.distance(mv_obj.pos, npc.pos)
+							if distance < schemlib_builder_npcf.plan_max_distance and
+									(not nearest_pos or (nearest_distance > distance)) then
+								nearest_pos = npc.pos
+								nearest_distance = distance
+							end
 						end
 					end
 					if nearest_pos then
