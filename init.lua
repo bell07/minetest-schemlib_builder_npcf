@@ -193,6 +193,8 @@ function func.create_new_plan(self)
 		local building = schemlib_builder_npcf.buildings[math.random(#schemlib_builder_npcf.buildings)]
 		dprint(self.npc_id,"File selected for build", building.filename)
 		tmp_next_plan = func.get_plan_from_file(building.name, building.filename)
+		tmp_next_plan.facedir = math.random(4)-1
+		tmp_next_plan.mirrored = (math.random(2) == 1)
 		dprint(self.npc_id,"building loaded. Nodes:", tmp_next_plan.data.nodecount)
 		return
 	end
