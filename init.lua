@@ -35,7 +35,13 @@ function plan_manager:restore()
 	for plan_id, entry in pairs(self.stored_list) do
 		local filename = building_checktable[entry.filename]
 		if filename then
-			func.get_plan_from_file(entry.filename, modpath.."/buildings/"..entry.filename, plan_id, entry.anchor_pos)
+			local plan = func.get_plan_from_file(entry.filename, modpath.."/buildings/"..entry.filename, plan_id, entry.anchor_pos)
+			if entry.facedir ~= nil then
+				plan.facedir = entry.facedir
+			end
+			if entry.mirrored ~= nil then
+				plan.mirrored = entry.mirrored
+			end
 		end
 	end
 end
@@ -49,7 +55,9 @@ function plan_manager:save()
 		if plan.schemlib_builder_npcf_building_filename then
 			local entry = {
 				anchor_pos = plan.anchor_pos,
-				filename   = plan.schemlib_builder_npcf_building_filename
+				filename   = plan.schemlib_builder_npcf_building_filename,
+				facedir    = plan.facedir,
+				mirrored   = plan.mirrored,
 			}
 			self.stored_list[plan_id] = entry
 		end
@@ -206,7 +214,7 @@ function func.create_new_plan(self)
 		-- check for possible overlaps with other plans
 		for plan_id, _ in pairs(plan_manager.plan_list) do
 			local plan = plan_manager:get(plan_id)
-			if tmp_next_plan:check_overlap(plan:get_world_minp(), plan:get_world_maxp(), chk_pos) then
+			if tmp_next_plan:check_overlap(plan:get_world_minp(), plan:get_world_maxp(), 3, chk_pos) then
 				error_pos = plan:get_world_pos(plan:get_random_plan_pos())
 				break
 			end
