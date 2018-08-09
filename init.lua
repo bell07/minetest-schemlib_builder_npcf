@@ -121,9 +121,13 @@ local function create_new_plan(self)
 		-- check for possible overlaps with other plans
 		for plan_id, meta in pairs(plan_manager.plan_meta_list) do
 			local plan_meta = plan_manager.get_plan_meta(plan_id)
-			error_pos = tmp_next_plan:check_overlap(plan_meta:get_world_minp(), plan_meta:get_world_maxp(), 3, chk_pos)
-			if error_pos then
-				break
+			local minp = plan_meta:get_world_minp()
+			local maxp = plan_meta:get_world_maxp()
+			if minp and maxp then
+				error_pos = tmp_next_plan:check_overlap(minp, maxp, 3, chk_pos)
+				if error_pos then
+					break
+				end
 			end
 		end
 		if not error_pos then
